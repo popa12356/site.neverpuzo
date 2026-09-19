@@ -11,16 +11,74 @@
 
   <style>
     :root {
-      --bg: #09090b;
-      --card: #18181b;
-      --card-hover: #202025;
-      --border: #27272a;
-      --text: #fafafa;
-      --muted: #a1a1aa;
-      --accent: #8b5cf6;
-      --accent-hover: #a78bfa;
+      --bg: #06060a;
+      --card: rgba(20, 20, 32, 0.72);
+      --card-hover: rgba(30, 30, 48, 0.9);
+      --border: rgba(120, 90, 220, 0.28);
+      --text: #f2f5ff;
+      --muted: #9aa0c0;
+      --accent: #a855f7;
+      --accent-hover: #c084fc;
+      --neon-cyan: #22d3ee;
+      --neon-violet: #a855f7;
+      --neon-pink: #ec4899;
+      --neon-grad: linear-gradient(90deg, #22d3ee, #a855f7, #ec4899);
       --danger: #ef4444;
     }
+
+    body {
+      background:
+        radial-gradient(700px 500px at 12% -5%, rgba(34, 211, 238, 0.16), transparent 60%),
+        radial-gradient(760px 560px at 88% 8%, rgba(168, 85, 247, 0.18), transparent 62%),
+        radial-gradient(700px 620px at 50% 110%, rgba(236, 72, 153, 0.14), transparent 60%),
+        var(--bg) !important;
+      background-attachment: fixed;
+    }
+
+    /* ==== Неон-гейминг оформление ==== */
+    .logo span { color: var(--neon-cyan); text-shadow: 0 0 14px rgba(34, 211, 238, 0.7); }
+
+    h1 strong {
+      background: var(--neon-grad);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-size: 200% auto;
+      animation: neonShift 6s linear infinite;
+      filter: drop-shadow(0 0 22px rgba(168, 85, 247, 0.5));
+    }
+    @keyframes neonShift {
+      0% { background-position: 0% 50%; }
+      100% { background-position: 200% 50%; }
+    }
+
+    .btn-primary, .action-btn.primary {
+      background: var(--neon-grad) !important;
+      background-size: 200% auto !important;
+      color: #fff !important;
+      box-shadow: 0 0 20px rgba(168, 85, 247, 0.45);
+      transition: 0.25s ease;
+    }
+    .btn-primary:hover, .action-btn.primary:hover {
+      background-position: right center !important;
+      box-shadow: 0 0 30px rgba(236, 72, 153, 0.6);
+      transform: translateY(-1px);
+    }
+
+    .dashboard-card, .card, .stats, .modal-box {
+      border: 1px solid var(--border) !important;
+      background: var(--card) !important;
+      backdrop-filter: blur(14px);
+      box-shadow: 0 0 0 1px rgba(120, 90, 220, 0.06), 0 18px 50px rgba(0, 0, 0, 0.5);
+    }
+
+    .badge, .plan-badge {
+      border: 1px solid rgba(34, 211, 238, 0.4) !important;
+      box-shadow: 0 0 16px rgba(34, 211, 238, 0.25);
+    }
+    .badge-dot { background: var(--neon-cyan) !important; box-shadow: 0 0 13px var(--neon-cyan) !important; }
+
+    input:focus { outline: none; border-color: var(--neon-violet) !important; box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.2); }
 
     * {
       box-sizing: border-box;
@@ -877,6 +935,16 @@
 
             <div class="card-divider" style="margin-top: 18px;"></div>
 
+            <p class="card-label" style="margin-bottom: 12px;">Активация ключа</p>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <input type="text" id="redeemCode" placeholder="PUZO-XXXX-XXXX-XXXX"
+                style="flex:1; min-width:180px; padding:11px 13px; border-radius:10px; border:1px solid var(--border); background:#0f0f12; color:var(--text); font-size:14px; text-transform:uppercase;">
+              <button class="btn btn-primary" style="flex:0 0 auto;" onclick="redeemKey()">Активировать</button>
+            </div>
+            <p id="redeemStatus" style="margin-top:10px; font-size:13px; color: var(--muted);"></p>
+
+            <div class="card-divider" style="margin-top: 18px;"></div>
+
             <p class="card-label" style="margin-bottom: 14px;">История платежей</p>
             <div id="paymentHistory">
               <p style="color: var(--muted); font-size: 13px;">Пока нет платежей.</p>
@@ -1129,6 +1197,28 @@
         location.hash = "#account";
       } catch (e) {
         alert("Не удалось активировать тариф: " + e.message);
+      }
+    }
+
+    /* ================= Активация ключа ================= */
+    async function redeemKey() {
+      const code = document.getElementById("redeemCode").value.trim().toUpperCase();
+      const st = document.getElementById("redeemStatus");
+      if (!getToken()) { alert("Сначала войдите в аккаунт."); return; }
+      if (!code) { st.textContent = "Введите ключ"; st.style.color = "var(--danger)"; return; }
+      st.textContent = "Проверка ключа...";
+      st.style.color = "var(--muted)";
+      try {
+        const d = await api("/api/redeem", { method: "POST", body: { code } });
+        st.textContent = "Ключ активирован: " + d.plan;
+        st.style.color = "#22c55e";
+        document.getElementById("redeemCode").value = "";
+        await renderAccount();
+      } catch (e) {
+        st.textContent = e.status === 409 ? "Ключ уже использован"
+          : e.status === 404 ? "Неверный ключ"
+          : ("Ошибка: " + e.message);
+        st.style.color = "var(--danger)";
       }
     }
 
