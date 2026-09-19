@@ -6,8 +6,14 @@
 // object, so accounts and subscriptions survive serverless cold starts.
 // Connection uses the REDIS_URL env var (a single TCP connection string, format
 // rediss://...) via the ioredis client.
+//
+// Activation keys: each key is stored at `key:<code>` with an index set
+// `keys:index`. Admin endpoints (/admin/keys, /admin/users) are protected by the
+// ADMIN_SECRET env var (sent via the x-admin-secret header). A `users:index` set
+// tracks all registered emails so admins can list users.
 
 const Redis = require('ioredis');
+const crypto = require('crypto');
 // Reuse a single connection across warm invocations (Vercel best practice)
 const redis = global.__redis || (global.__redis = new Redis(process.env.REDIS_URL, {
   maxRetriesPerRequest: 3,
@@ -81,6 +87,56 @@ function pathEndsWith(url, suffix) {
   return path === suffix || path.endsWith(suffix);
 }
 
+// ─── Activation keys ────────────────────────────────────────────────────────
+const PLAN_TYPES = {
+  '7':   { label: 'Ключ 7 дней',      days: 7 },
+  '30':  { label: 'Ключ 30 дней',     days: 30 },
+  'forever': { label: 'Ключ навсегда', days: -1 }
+};
+
+// Admin auth: compare the x-admin-secret header against the ADMIN_SECRET env var.
+function isAdmin(req) {
+  const s = req.headers['x-admin-secret'] || '';
+  return process.env.ADMIN_SECRET && s === process.env.ADMIN_SECRET;
+}
+
+// Generate a key code like PUZO-XXXX-XXXX-XXXX (hex, uppercase).
+function genKeyCode() {
+  const seg = () => crypto.randomBytes(2).toString('hex').toUpperCase();
+  return 'PUZO-' + seg() + '-' + seg() + '-' + seg();
+}
+
+async function saveKey(k) {
+  await redis.set('key:' + k.code, JSON.stringify(k));
+  await redis.sadd('keys:index', k.code);
+}
+
+async function loadKey(code) {
+  const raw = await redis.get('key:' + code);
+  return raw ? JSON.parse(raw) : null;
+}
+
+async function listKeys() {
+  const codes = await redis.smembers('keys:index');
+  const out = [];
+  for (const c of codes) {
+    const raw = await redis.get('key:' + c);
+    if (raw) out.push(JSON.parse(raw));
+  }
+  out.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return out;
+}
+
+async function listUsers() {
+  const emails = await redis.smembers('users:index');
+  const out = [];
+  for (const e of emails) {
+    const u = await loadUser(e);
+    if (u) out.push(Object.assign(publicUser(u), { createdAt: u.createdAt }));
+  }
+  return out;
+}
+
 module.exports = async (req, res) => {
   try {
     const { method, url } = req;
@@ -101,6 +157,7 @@ module.exports = async (req, res) => {
       if (await loadUser(email)) return send(res, 409, { error: 'User already exists' });
       const user = { name: b.name || '', email, password: b.password || '', plan: null, planExpiry: null, payments: [], createdAt: new Date().toISOString() };
       await saveUser(user);
+      await redis.sadd('users:index', email);
       return send(res, 201, { token: 'mock-jwt-' + email, user: publicUser(user) });
     }
 
@@ -187,6 +244,61 @@ module.exports = async (req, res) => {
           { id: 'fullbright', name: 'FullBright',   version: '1.0.0', enabled: false, file: 'modules/fullbright.lua', sha256: 'beadED' }
         ]
       });
+    }
+
+    // POST /api/redeem — USER redeems an activation key
+    if (method === 'POST' && pathEndsWith(url, '/redeem')) {
+      const email = emailFromAuth(req);
+      const u = await loadUser(email);
+      if (!u) return send(res, 401, { error: 'Unauthorized' });
+      const b = await getBody(req);
+      const code = (b.code || '').trim().toUpperCase();
+      if (!code) return send(res, 400, { error: 'Key required' });
+      const k = await loadKey(code);
+      if (!k) return send(res, 404, { error: 'Invalid key' });
+      if (k.usedBy) return send(res, 409, { error: 'Key already used' });
+      const days = k.days;
+      let expiry = null;
+      if (days && days > 0) {
+        const base = (typeof u.planExpiry === 'number' && u.planExpiry > Date.now()) ? u.planExpiry : Date.now();
+        expiry = base + days * 86400000;
+      } else if (days === -1) { expiry = 'forever'; }
+      u.plan = k.label; u.planExpiry = expiry;
+      u.payments = u.payments || [];
+      u.payments.unshift({ title: k.label + ' (по ключу)', amount: '', date: new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }) });
+      k.usedBy = email; k.usedAt = new Date().toISOString();
+      await saveKey(k);
+      await saveUser(u);
+      return send(res, 200, { plan: u.plan, planExpiry: u.planExpiry });
+    }
+
+    // POST /api/admin/keys — ADMIN creates keys
+    if (method === 'POST' && pathEndsWith(url, '/admin/keys')) {
+      if (!isAdmin(req)) return send(res, 403, { error: 'Forbidden' });
+      const b = await getBody(req);
+      const type = String(b.type || '30');
+      const count = Math.min(Math.max(parseInt(b.count || 1, 10), 1), 50);
+      const def = PLAN_TYPES[type];
+      if (!def) return send(res, 400, { error: 'Unknown key type' });
+      const created = [];
+      for (let i = 0; i < count; i++) {
+        const k = { code: genKeyCode(), type, label: def.label, days: def.days, createdAt: new Date().toISOString(), usedBy: null, usedAt: null };
+        await saveKey(k);
+        created.push(k);
+      }
+      return send(res, 201, { created });
+    }
+
+    // GET /api/admin/keys — ADMIN lists all keys
+    if (method === 'GET' && pathEndsWith(url, '/admin/keys')) {
+      if (!isAdmin(req)) return send(res, 403, { error: 'Forbidden' });
+      return send(res, 200, { keys: await listKeys() });
+    }
+
+    // GET /api/admin/users — ADMIN lists all users
+    if (method === 'GET' && pathEndsWith(url, '/admin/users')) {
+      if (!isAdmin(req)) return send(res, 403, { error: 'Forbidden' });
+      return send(res, 200, { users: await listUsers() });
     }
 
     return send(res, 404, { error: 'Route not defined', method, url });
