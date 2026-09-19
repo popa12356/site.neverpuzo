@@ -5,5 +5,8 @@
   "description": "neverpuzo site + serverless API (Vercel)",
   "engines": {
     "node": "20.x"
+  },
+  "dependencies": {
+    "@upstash/redis": "^1.34.0"
   }
 }
