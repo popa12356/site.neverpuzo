@@ -1,0 +1,9 @@
+{
+  "name": "neverpuzo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "neverpuzo site + serverless API (Vercel)",
+  "engines": {
+    "node": "20.x"
+  }
+}
