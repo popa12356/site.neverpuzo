@@ -2,17 +2,18 @@
 // Reimplements the same routes/logic as postman/mocks/subscriptions-api/default.js
 // Runs at https://neverpuzo.vercel.app/api/*
 //
-// Users are now persisted in Upstash Redis (key `user:<email>`) instead of an in-memory
+// Users are now persisted in Redis (key `user:<email>`) instead of an in-memory
 // object, so accounts and subscriptions survive serverless cold starts.
-// Connection uses KV_REST_API_URL / UPSTASH_REDIS_REST_URL (and matching *_TOKEN) env vars,
-// which are auto-injected by the Vercel Upstash (KV) integration.
+// Connection uses the REDIS_URL env var (a single TCP connection string, format
+// rediss://...) via the ioredis client.
 
-const { Redis } = require('@upstash/redis');
-
-const redis = new Redis({
-  url: process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN,
-});
+const Redis = require('ioredis');
+// Reuse a single connection across warm invocations (Vercel best practice)
+const redis = global.__redis || (global.__redis = new Redis(process.env.REDIS_URL, {
+  maxRetriesPerRequest: 3,
+  lazyConnect: false,
+  tls: (process.env.REDIS_URL || '').startsWith('rediss://') ? {} : undefined
+}));
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -49,20 +50,15 @@ function getBody(req) {
   });
 }
 
-// Load a user object from Redis. @upstash/redis auto-deserializes JSON, but handle
-// the string case just in case the stored value comes back as a raw string.
+// Load a user object from Redis. ioredis stores plain strings, so parse the JSON.
 async function loadUser(email) {
   if (!email) return null;
-  let result = await redis.get('user:' + email);
-  if (!result) return null;
-  if (typeof result === 'string') {
-    try { result = JSON.parse(result); } catch (e) { return null; }
-  }
-  return result;
+  const raw = await redis.get('user:' + email);
+  return raw ? JSON.parse(raw) : null;
 }
 
 async function saveUser(u) {
-  await redis.set('user:' + u.email, u);
+  await redis.set('user:' + u.email, JSON.stringify(u));
 }
 
 // Returns true if the plan was expired and cleared (so caller can persist the change).
@@ -102,9 +98,9 @@ module.exports = async (req, res) => {
       const b = await getBody(req);
       const email = (b.email || '').toLowerCase();
       if (!email) return send(res, 400, { error: 'Email required' });
-      if (await redis.get('user:' + email)) return send(res, 409, { error: 'User already exists' });
+      if (await loadUser(email)) return send(res, 409, { error: 'User already exists' });
       const user = { name: b.name || '', email, password: b.password || '', plan: null, planExpiry: null, payments: [], createdAt: new Date().toISOString() };
-      await redis.set('user:' + email, user);
+      await saveUser(user);
       return send(res, 201, { token: 'mock-jwt-' + email, user: publicUser(user) });
     }
 
@@ -156,7 +152,7 @@ module.exports = async (req, res) => {
       u.payments = u.payments || [];
       const am = planLabel.match(/(\d+\s*₽)/);
       u.payments.unshift({ title: planLabel, amount: am ? am[1] : '', date: new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }) });
-      await redis.set('user:' + email, u);
+      await saveUser(u);
       return send(res, 200, { plan: u.plan, planExpiry: u.planExpiry, payments: u.payments });
     }
 
