@@ -225,7 +225,7 @@ module.exports = async (req, res) => {
       return send(res, 200, { ok: true });
     }
 
-    // GET /api/sync/modules — синхронизация модулей/функций лоадера. Доступно только с активной подпиской.
+    // GET /api/sync/modules — синхронизация модулей для лоадера Minecraft. Доступно только с активной подпиской.
     if (method === 'GET' && pathEndsWith(url, '/sync/modules')) {
       const email = emailFromAuth(req);
       const u = await loadUser(email);
@@ -234,14 +234,14 @@ module.exports = async (req, res) => {
       const active = u.planExpiry === 'forever' || (typeof u.planExpiry === 'number' && u.planExpiry > Date.now());
       if (!active) return send(res, 403, { error: 'No active subscription' });
       return send(res, 200, {
-        version: '1.4.0',
+        version: '1.0.0',
         updatedAt: new Date().toISOString(),
         modules: [
-          { id: 'esp',        name: 'ESP',          version: '1.2.0', enabled: true,  file: 'modules/esp.lua',        sha256: 'a1b2c3' },
-          { id: 'tracers',    name: 'Tracers',      version: '1.0.3', enabled: true,  file: 'modules/tracers.lua',    sha256: 'd4e5f6' },
-          { id: 'nametags',   name: 'NameTags',     version: '1.1.0', enabled: true,  file: 'modules/nametags.lua',   sha256: '7a8b9c' },
-          { id: 'hud',        name: 'HUD',          version: '2.0.1', enabled: true,  file: 'modules/hud.lua',        sha256: 'c0ffee' },
-          { id: 'fullbright', name: 'FullBright',   version: '1.0.0', enabled: false, file: 'modules/fullbright.lua', sha256: 'beadED' }
+          { id: 'xray',       name: 'X-Ray',        version: '1.2.0', enabled: true,  downloadUrl: 'https://example.com/xray.jar',        sha256: 'abc123', size: 102400 },
+          { id: 'minimap',    name: 'MiniMap',      version: '2.1.5', enabled: true,  downloadUrl: 'https://example.com/minimap.jar',     sha256: 'def456', size: 256000 },
+          { id: 'flymod',     name: 'FlyMod',       version: '1.5.2', enabled: true,  downloadUrl: 'https://example.com/flymod.jar',      sha256: '789ghi', size: 51200 },
+          { id: 'freecam',    name: 'FreeCam',      version: '3.0.1', enabled: true,  downloadUrl: 'https://example.com/freecam.jar',     sha256: 'jkl012', size: 153600 },
+          { id: 'speedhack',  name: 'SpeedHack',    version: '1.1.0', enabled: false, downloadUrl: 'https://example.com/speedhack.jar',   sha256: 'mno345', size: 76800 }
         ]
       });
     }
